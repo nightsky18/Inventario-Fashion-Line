@@ -4,9 +4,9 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import multer from 'multer';
 import mongoose from 'mongoose';
-import open from 'open'; // Nota: open ahora se importa
+import open from 'open'; //  open ahora se importa
 import { Product } from './models/Product.js'; 
-
+import fs from 'fs/promises'; // Importa fs/promises para manejar la eliminación de archivos
 import path from 'path'; // Importa path si no lo tienes
 import { fileURLToPath } from 'url';
 
@@ -39,13 +39,18 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Configurar multer
-const upload = multer({
-    dest: 'images/', 
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, path.join(__dirname, 'uploads')); // Todas las imágenes irán a 'uploads'
+    },
+    filename: (req, file, cb) => {
+        cb(null, `${Date.now()}-${file.originalname}`); // Nombres únicos
+    }
 });
 
+const upload = multer({ storage });
 
-// Servir la carpeta 'images' como estática
-app.use('/images', express.static(path.join(__dirname, 'images')));
+
 
 // Servir la carpeta frontend como estática
 app.use(express.static(path.join(__dirname, '../frontend')));
@@ -61,7 +66,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Rutas CRUD
 app.post('/productos', upload.single('foto'), async (req, res) => {
     const { nombre, categoria, talla, precio, cantidad } = req.body;
-    const foto = req.file ? `/images/${req.file.filename}` : null; // Cambiado de '/uploads/' a '/images/'
+    const foto = req.file ? `/uploads/${req.file.filename}` : null; // 
     const bajoStock = cantidad < 5;
     const product = new Product({ nombre, categoria, talla, precio, cantidad, foto, bajoStock });
     await product.save();
@@ -86,11 +91,37 @@ app.put('/productos/:id', async (req, res) => {
     res.send(product);
 });
 
+
 app.delete('/productos/:id', async (req, res) => {
     const { id } = req.params;
-    await Product.findByIdAndDelete(id);
-    res.status(204).send();
+
+    try {
+        // Buscar el producto en la base de datos
+        const product = await Product.findById(id);
+        if (!product) {
+            return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+
+        // Si el producto tiene una imagen asociada, eliminarla del sistema de archivos
+        if (product.foto) {
+            const imagePath = path.join(__dirname, product.foto);
+            try {
+                await fs.unlink(imagePath); // Eliminar la imagen
+                console.log(`Imagen eliminada: ${imagePath}`);
+            } catch (err) {
+                console.error(`Error al eliminar la imagen: ${err.message}`);
+            }
+        }
+
+        // Eliminar el producto de la base de datos
+        await Product.findByIdAndDelete(id);
+        res.status(204).send(); // Respuesta sin contenido
+    } catch (error) {
+        console.error(`Error al eliminar el producto: ${error.message}`);
+        res.status(500).json({ error: 'Error al eliminar el producto' });
+    }
 });
+
 
 //para subir imagen
 app.post('/productos', upload.single('foto'), async (req, res) => {
